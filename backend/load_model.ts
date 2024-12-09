@@ -3,19 +3,21 @@ import { level } from "./backend_interfaces/level.ts";
 import { pin } from "./backend_interfaces/pin.ts";
 import { ModifierType } from "./backend_interfaces/pin.ts";
 
-export function get_model_raw(filepath: string) {
+export function get_file_raw(filepath: string) {
     const model_raw = Deno.readTextFileSync(filepath);
     return model_raw;
 }
 
 function get_model_object(model_raw: string, name: string) {
-    const model: model = {
-        name: name,
-        levels: []
-    }
-
+    
     const model_lines = model_raw.split("\n");
     const model_init_line = model_lines[0];
+    
+    const model: model = {
+        name: name,
+        init_line: model_init_line,
+        levels: [],
+    }
 
     if (!model_init_line.startsWith("MDL")) {
         throw new Error(`Invalid file format ${name}.`);
@@ -72,7 +74,7 @@ export function load_model_by_name(name: string) {
 
     console.log(`Loading model: ${model_filepath}..`);
 
-    const model_raw = get_model_raw(`./models/${name}.mdl`);
+    const model_raw = get_file_raw(`./models/${name}.mdl`);
     const model = get_model_object(model_raw, name);
 
     console.log(`Model ${name} loaded.`);
@@ -81,7 +83,7 @@ export function load_model_by_name(name: string) {
 }
 
 export function load_model_init_line(model_name: string) {
-    const model_raw = get_model_raw(`./models/${model_name}.mdl`);
+    const model_raw = get_file_raw(`./models/${model_name}.mdl`);
     const model_lines = model_raw.split("\n");
     const model_init_line = model_lines[0];
 

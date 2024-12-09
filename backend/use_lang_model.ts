@@ -47,4 +47,4 @@ export function use_language_model(model_name: string, input_str: string)
     return final_str;
 }
 
-use_language_model("full_alphabet", "Czesc");
+use_language_model("test_model", "AB");
