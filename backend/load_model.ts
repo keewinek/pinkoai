@@ -14,7 +14,14 @@ function get_model_object(model_raw: string, name: string) {
         levels: []
     }
 
-    const model_raw_levels = model_raw.split("\n");
+    const model_lines = model_raw.split("\n");
+    const model_init_line = model_lines[0];
+
+    if (!model_init_line.startsWith("MDL")) {
+        throw new Error(`Invalid file format ${name}.`);
+    }
+
+    const model_raw_levels = model_lines.slice(1);
 
     for (let y = 0; y < model_raw_levels.length; y++) {
         const level: level = {y: y, pins:[]};
@@ -22,10 +29,18 @@ function get_model_object(model_raw: string, name: string) {
         const level_raw = model_raw_levels[y];
         const level_raw_pins = level_raw.split(" ");
 
+        if (level_raw == "") {
+            continue;
+        }
+
         for (let x = 0; x < level_raw_pins.length; x++) {
             const pin_raw = level_raw_pins[x];
             let pin_modifier_type = ModifierType.RandomWay;
             let pin_modifier_value = -1;
+
+            if (pin_raw == "") {
+                continue;
+            }
 
             if (pin_raw == "D") {
                 pin_modifier_type = ModifierType.Duplicate;
@@ -63,4 +78,12 @@ export function load_model_by_name(name: string) {
     console.log(`Model ${name} loaded.`);
 
     return model;
+}
+
+export function load_model_init_line(model_name: string) {
+    const model_raw = get_model_raw(`./models/${model_name}.mdl`);
+    const model_lines = model_raw.split("\n");
+    const model_init_line = model_lines[0];
+
+    return model_init_line;
 }

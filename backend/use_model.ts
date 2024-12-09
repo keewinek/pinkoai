@@ -64,4 +64,4 @@ export function use_model(model_name: string, start_locations: number[]) {
     return current_locations;
 }
 
-use_model("manual", [0, 2]);
+use_model("test_model", [0]);
