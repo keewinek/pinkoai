@@ -1,5 +1,5 @@
+from interfaces.model_like import *
 from model import *
-from machine import Pin
 
 def get_file_raw(filepath):
     with open(filepath, 'r') as f:
@@ -44,4 +44,4 @@ def get_model_from_file(filepath):
     return get_model_from_raw(get_file_raw(filepath), filepath.split('/')[-1].split('.')[0])
 
 def get_model_by_name(name):
-    return get_model_from_file(f"models/${name}.mdl")
+    return get_model_from_file(f"models/{name}.mdl")

@@ -1,4 +1,4 @@
-from model import *
+from interfaces.model_like import *
 from rng import *
 
 # Get next balls locations at certain level with pins
