@@ -3,14 +3,14 @@ import os
 import creative
 
 MODEL_NAME = "bard"
-CORPUS = "corpus/sonnets.txt"
+CORPUS = "corpus/poetry.txt"
 
 # Train once, then reuse the saved model
 if os.path.exists(creative.model_path(MODEL_NAME)):
     model = creative.CreativeModel.load(MODEL_NAME)
 else:
     with open(CORPUS, "r", encoding="utf-8") as f:
-        model = creative.CreativeModel.train(MODEL_NAME, f.read())
+        model = creative.CreativeModel.train(MODEL_NAME, f.read(), order=6, min_count=3)
     model.save()
     print(f"Trained {MODEL_NAME} on {CORPUS}")
 

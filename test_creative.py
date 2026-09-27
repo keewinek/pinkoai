@@ -1,3 +1,4 @@
+import math
 import os
 import random
 import tempfile
@@ -21,30 +22,33 @@ def landing_distribution(board):
     return mass
 
 
+def probs_from_counts(counts, slots):
+    total = sum(counts.values())
+    return [counts.get(y, 0) / total for y in range(slots)]
+
+
 class BoardTest(unittest.TestCase):
     def test_trained_pins_reproduce_counts(self):
         counts = {0: 3, 4: 1, 7: 6, 11: 10}
-        board = creative.Board(counts, slots=12)
-        dist = landing_distribution(board)
-        total = sum(counts.values())
+        probs = probs_from_counts(counts, 12)
+        dist = landing_distribution(creative.Board(probs))
         for y in range(12):
-            self.assertAlmostEqual(dist[y], counts.get(y, 0) / total, places=3)
+            self.assertAlmostEqual(dist[y], probs[y], places=6)
 
     def test_chaos_spreads_the_balls(self):
-        counts = {5: 1}
-        calm = landing_distribution(creative.Board(counts, slots=12, chaos=1.0))
-        wild = landing_distribution(creative.Board(counts, slots=12, chaos=1.5))
-        self.assertGreater(calm[5], 0.99)
+        probs = [0.001] * 12
+        probs[5] = 1 - 0.011
+        calm = landing_distribution(creative.Board(probs, chaos=1.0))
+        wild = landing_distribution(creative.Board(probs, chaos=1.5))
+        self.assertAlmostEqual(calm[5], probs[5], places=6)
         self.assertLess(wild[5], calm[5])
         self.assertAlmostEqual(sum(wild), 1.0, places=9)
 
     def test_drop_lands_on_a_slot(self):
-        board = creative.Board({2: 1, 9: 1}, slots=10)
+        board = creative.Board(probs_from_counts({2: 1, 9: 1}, 10))
         random.seed(0)
-        landed = [board.drop() for _ in range(300)]
-        self.assertTrue(all(0 <= y < 10 for y in landed))
-        # Unseen slots only get a sliver of prior belief
-        self.assertGreaterEqual(sum(y in (2, 9) for y in landed), 295)
+        landed = {board.drop() for _ in range(300)}
+        self.assertEqual(landed, {2, 9})
 
 
 class CreativeModelTest(unittest.TestCase):
@@ -62,6 +66,30 @@ class CreativeModelTest(unittest.TestCase):
     def test_charset_groups_similar_characters(self):
         charset = creative.order_charset("bca. eo")
         self.assertEqual(charset, " .aeobc")
+
+    def test_distribution_blends_shorter_contexts(self):
+        model = creative.CreativeModel.train("tiny", self.TEXT, order=3, min_count=1)
+        probs = model.distribution("the")
+        self.assertAlmostEqual(sum(probs), 1.0, places=9)
+        # " " always followed "the", but blending leaves room for everything else
+        self.assertGreater(probs[model.slot_of[" "]], 0.5)
+        self.assertGreater(min(probs), 0)
+        # Never-seen contexts fall back to the shorter one
+        self.assertEqual(model.distribution("zzthe"), model.distribution("the"))
+
+    def test_rare_long_contexts_are_pruned(self):
+        text = "abcdefgh" + "the cat. " * 5
+        model = creative.CreativeModel.train("tiny", text, order=5, min_count=2)
+        self.assertNotIn("abcde", model.counts)   # seen once
+        self.assertIn("abc", model.counts)        # short contexts are always kept
+        self.assertIn("the c", model.counts)      # seen five times
+
+    def test_evaluate_prefers_familiar_text(self):
+        model = creative.CreativeModel.train("tiny", self.TEXT, order=3)
+        familiar = model.evaluate("the cat sat on the mat.")
+        strange = model.evaluate("tan ohm eat cot sham.")
+        self.assertLess(familiar, strange)
+        self.assertLess(familiar, math.log2(len(model.charset)))
 
     def test_save_and_load_roundtrip(self):
         model = creative.CreativeModel.train("tiny", self.TEXT, order=3)

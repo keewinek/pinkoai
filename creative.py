@@ -17,11 +17,20 @@ character. Training does not touch any randomness - it only tilts the pins:
                           -----------------------------------------
                           sum_y q(y) * C(L-l,   y-x)   / C(L, y)
 
-    With those pins the board reproduces the corpus distribution q exactly.
+    With those pins the board reproduces the distribution q exactly.
+
+    q is not the raw counts of one context: a context seen only a couple of
+    times would be far too sure of itself. Each board blends its own counts
+    with the board of the next-shorter context (Witten-Bell smoothing), down
+    to an even spread over every character:
+
+        q_ctx(c) = (count_ctx(c) + T * q_shorter(c)) / (total_ctx + T)
+
+    where T is how many different characters ever followed the context.
 
 How it creates
 --------------
-Creativity is one knob (0 = careful copyist, 1 = wild poet) that drives two
+Creativity is one knob (0 = stays close to the corpus, 1 = wild poet) that drives two
 very Plinko-like effects:
 
   * chaos - pins are loosened (their odds are pulled towards 50/50), so a
@@ -46,10 +55,10 @@ from model_calculate import get_next_locs
 MODELS_DIR = "models"
 INIT_PREFIX = "MDL:CREATIVE"
 
-# Tiny amount of belief that any character could follow any context. It keeps
-# every pin away from exactly 0% / 100%, so loosened pins can always slip.
-PRIOR_MASS = 0.002
 MIN_PIN_CHANCE = 1e-9
+
+# Contexts this short are always kept; longer ones need `min_count` sightings
+ALWAYS_KEEP_CONTEXT = 3
 
 # Leaps never forget more than this: shorter contexts produce gibberish
 MIN_LEAP_CONTEXT = 2
@@ -104,19 +113,15 @@ class LazyPins:
 class Board:
     """A Plinko board whose landing slots are the characters of a charset."""
 
-    def __init__(self, slot_counts, slots, chaos=1.0):
-        self.slots = slots
-        self.rows = slots - 1
+    def __init__(self, probs, chaos=1.0):
+        """`probs[y]` is how often the ball should land in slot y (sums to 1)."""
+        self.slots = len(probs)
+        self.rows = self.slots - 1
         self.chaos = chaos
 
-        total = sum(slot_counts.values())
-        prior = PRIOR_MASS / slots
         L = self.rows
         # Weight of every landing slot divided by the number of paths leading to it
-        self.weights = [
-            (slot_counts.get(y, 0) + prior) / (total + PRIOR_MASS) / math.comb(L, y)
-            for y in range(slots)
-        ]
+        self.weights = [probs[y] / math.comb(L, y) for y in range(self.slots)]
         self.comb = [[float(math.comb(n, k)) for k in range(L + 1)] for n in range(L + 1)]
         self.pin_cache = {}
         self.levels = [Level(y, LazyPins(self, y)) for y in range(L)]
@@ -168,12 +173,19 @@ class CreativeModel:
         self.counts = counts
         self.vocab = vocab
         self.slot_of = {c: i for i, c in enumerate(charset)}
+        self.dist_cache = {}
         self.board_cache = {}
 
     # ---- training ---------------------------------------------------------
 
     @classmethod
-    def train(cls, name, text, order=5):
+    def train(cls, name, text, order=6, min_count=3):
+        """Count what follows every context of up to `order` characters.
+
+        Contexts longer than ALWAYS_KEEP_CONTEXT seen fewer than `min_count`
+        times are dropped: their board would just be a noisy copy of the
+        shorter context's, and the model file gets much smaller.
+        """
         if order < 1:
             raise ValueError("order must be at least 1")
         if len(text) < 2:
@@ -190,6 +202,8 @@ class CreativeModel:
                 table = counts.setdefault(ctx, {})
                 table[nxt] = table.get(nxt, 0) + 1
 
+        counts = {ctx: table for ctx, table in counts.items()
+                  if len(ctx) <= ALWAYS_KEEP_CONTEXT or sum(table.values()) >= min_count}
         return cls(name, charset, order, counts, sorted(words_of(text)))
 
     # ---- persistence ------------------------------------------------------
@@ -218,11 +232,32 @@ class CreativeModel:
 
     # ---- thinking ---------------------------------------------------------
 
+    def distribution(self, context):
+        """Landing chances for every slot after `context`, blended with shorter contexts."""
+        if context in self.dist_cache:
+            return self.dist_cache[context]
+
+        if context == "":
+            shorter = [1 / len(self.charset)] * len(self.charset)
+        else:
+            shorter = self.distribution(context[1:])
+
+        table = self.counts.get(context)
+        if not table:
+            probs = shorter
+        else:
+            total = sum(table.values())
+            kinds = len(table)
+            probs = [(table.get(c, 0) + kinds * shorter[y]) / (total + kinds)
+                     for y, c in enumerate(self.charset)]
+
+        self.dist_cache[context] = probs
+        return probs
+
     def board(self, context, chaos):
         key = (context, round(chaos, 4))
         if key not in self.board_cache:
-            slot_counts = {self.slot_of[c]: n for c, n in self.counts[context].items()}
-            self.board_cache[key] = Board(slot_counts, len(self.charset), chaos)
+            self.board_cache[key] = Board(self.distribution(context), chaos)
         return self.board_cache[key]
 
     def pick_context(self, history, creativity):
@@ -251,6 +286,24 @@ class CreativeModel:
         for _ in range(length):
             out += self.next_char(out, creativity)
         return out
+
+    def evaluate(self, text):
+        """Average surprise in bits per character when reading `text` (lower is better).
+
+        Uses the exact landing chances of the untouched boards (creativity aside).
+        A blind guess among all slots scores log2(len(charset)).
+        """
+        unknown = sorted({c for c in text if c not in self.slot_of})
+        if unknown:
+            raise ValueError(f"text uses characters the model never saw: {unknown}")
+        if len(text) < 2:
+            raise ValueError("text is too short to evaluate")
+
+        bits = 0.0
+        for i in range(1, len(text)):
+            context = text[max(0, i - self.order):i]
+            bits -= math.log2(self.distribution(context)[self.slot_of[text[i]]])
+        return bits / (len(text) - 1)
 
     def originality(self, text):
         """Share of the words in `text` that never appeared in the training corpus."""
@@ -282,7 +335,7 @@ def model_path(name):
 def cmd_train(args):
     with open(args.corpus, "r", encoding="utf-8") as f:
         text = f.read()
-    model = CreativeModel.train(args.name, text, args.order)
+    model = CreativeModel.train(args.name, text, args.order, args.min_count)
     path = model.save(overwrite=args.overwrite)
     print(f"Trained {args.name}: {len(text)} characters, {len(model.charset)} slots, "
           f"{len(model.counts)} boards (order {args.order}) -> {path}")
@@ -299,6 +352,16 @@ def cmd_write(args):
     print(f"creativity {args.creativity:.2f} | originality {score:.0%} of words are new")
     if invented:
         print("invented words: " + ", ".join(invented[:20]))
+
+
+def cmd_evaluate(args):
+    model = CreativeModel.load(args.name)
+    with open(args.text, "r", encoding="utf-8") as f:
+        text = f.read()
+    score = model.evaluate(text)
+    blind = math.log2(len(model.charset))
+    print(f"{args.name} on {args.text}: {score:.2f} bits per character "
+          f"(blind guessing: {blind:.2f}, lower is better)")
 
 
 def cmd_peek(args):
@@ -321,7 +384,9 @@ def main(argv=None):
     p = sub.add_parser("train", help="tilt the pins using a text corpus")
     p.add_argument("corpus", help="path to a UTF-8 text file")
     p.add_argument("--name", required=True, help="model name (saved to models/<name>.mdl)")
-    p.add_argument("--order", type=int, default=5, help="how many previous characters it remembers")
+    p.add_argument("--order", type=int, default=6, help="how many previous characters it remembers")
+    p.add_argument("--min-count", type=int, default=3,
+                   help=f"drop contexts longer than {ALWAYS_KEEP_CONTEXT} characters seen fewer times")
     p.add_argument("--overwrite", action="store_true")
     p.set_defaults(func=cmd_train)
 
@@ -329,9 +394,14 @@ def main(argv=None):
     p.add_argument("name")
     p.add_argument("--seed", default="", help="text to start from")
     p.add_argument("--length", type=int, default=400)
-    p.add_argument("--creativity", type=float, default=0.5, help="0 = copyist, 1 = wild")
+    p.add_argument("--creativity", type=float, default=0.5, help="0 = close to the corpus, 1 = wild")
     p.add_argument("--rng-seed", type=int, default=None)
     p.set_defaults(func=cmd_write)
+
+    p = sub.add_parser("evaluate", help="measure how well the model predicts a text")
+    p.add_argument("name")
+    p.add_argument("text", help="path to a UTF-8 text file, ideally one it was not trained on")
+    p.set_defaults(func=cmd_evaluate)
 
     p = sub.add_parser("peek", help="drop many balls for one context and show where they land")
     p.add_argument("name")
