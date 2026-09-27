@@ -3,7 +3,7 @@ from model_calculate import get_next_locs
 
 class Model:
     def __init__(self,  name):
-        self.name = ""
+        self.name = name
         self.init_line = ""
         self.levels = []
 

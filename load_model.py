@@ -10,7 +10,7 @@ def get_model_from_raw(model_raw, name):
     lines = model_raw.split('\n')
 
     if (not lines[0].startswith("MDL")):
-        throw(f"Invalid model file format model: ${name}.")
+        raise Exception(f"Invalid model file format model: {name}.")
     
     model.init_line = lines[0]
 
@@ -32,7 +32,7 @@ def get_model_from_raw(model_raw, name):
                 pin.mod_type = ModType.Duplicate
             else:
                 pin.mod_type = ModType.ChanceWay
-                pin.mod_value = pin_raw
+                pin.mod_value = float(pin_raw)
 
             level.pins.append(pin)
 

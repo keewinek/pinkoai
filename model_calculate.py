@@ -25,7 +25,7 @@ def get_next_locs(curr_locs, level):
             else:
                 create_pin_left = True
         else:
-            throw("Unknown mod type")
+            raise Exception("Unknown mod type")
         
         # Handle balls collisions
         if (next_locs.count(x) > 0 and create_pin_left):
